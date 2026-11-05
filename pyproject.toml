@@ -8,4 +8,13 @@ dependencies = [
     "ollama>=0.6.3",
     "pytest>=9.2.0",
     "python-dotenv>=1.2.4",
+    "taskflow",
 ]
+
+[tool.uv.workspace]
+members = [
+    "taskflow",
+]
+
+[tool.uv.sources]
+taskflow = { workspace = true }

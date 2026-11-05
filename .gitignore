@@ -8,3 +8,12 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Secrets (jetons HF, etc.) : jamais dans Git
+.env
+
+# Donnees creees par la CLI taskflow et par l'agent
+tasks.json
+
+.DS_Store
+.pytest_cache/
