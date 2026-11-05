@@ -1,4 +1,8 @@
+import json
+from typing import Literal
+
 import ollama
+from pydantic import BaseModel, Field, ValidationError
 
 from tools import AVAILABLE_FUNCTIONS, TOOLS_SCHEMA
 
@@ -63,5 +67,66 @@ def repondre(question: str) -> str:
     return "Echec de la boucle agentique"
 
 
+# --- 8.2 : sortie finale contrainte -------------------------------------------
+
+
+class DiagnosticTicket(BaseModel):
+    fichiers_concernes: list[str]
+    cause_probable: str
+    correctif_propose: str | None = None
+    confiance: float = Field(ge=0.0, le=1.0)
+    statut: Literal["diagnostique", "information_insuffisante"]
+
+
+# --- 8.3 : validation et gestion explicite de l'echec -------------------------
+
+
+def diagnostiquer(prompt_final: str, tentatives: int = 1) -> DiagnosticTicket:
+    for i in range(tentatives + 1):
+        # Sortie structuree native d'Ollama : le schema JSON contraint la generation
+        response = ollama.chat(
+            model=MODEL,
+            messages=[{"role": "user", "content": prompt_final}],
+            format=DiagnosticTicket.model_json_schema(),
+        )
+        brut = response["message"]["content"]
+        try:
+            return DiagnosticTicket.model_validate_json(brut)
+        except ValidationError as e:
+            if i == tentatives:
+                raise RuntimeError(
+                    "Le modele n'a pas produit de JSON conforme "
+                    f"apres {tentatives + 1} tentatives : {e}"
+                ) from e
+            prompt_final += (
+                "\n\nTa reponse precedente etait invalide :\n"
+                + str(e)
+                + "\nCorrige et renvoie uniquement un JSON conforme au schema."
+            )
+
+
+def traiter_ticket(ticket: str) -> DiagnosticTicket:
+    # 1. L'agent explore le projet avec ses outils (lecture du code, tests)
+    analyse = repondre(
+        "Voici un ticket utilisateur sur le projet. Explore le code (et lance les "
+        f"tests si c'est utile) pour en trouver la cause.\n\n{ticket}"
+    )
+    # 2. Prompt final : on demande UNIQUEMENT un JSON conforme au schema
+    prompt_final = (
+        f"Ticket :\n{ticket}\n\n"
+        f"Analyse realisee en explorant le code :\n{analyse}\n\n"
+        "A partir de cette analyse, produis le diagnostic du ticket. "
+        "Reponds UNIQUEMENT avec un JSON conforme a ce schema, sans texte autour :\n"
+        f"{json.dumps(DiagnosticTicket.model_json_schema(), ensure_ascii=False)}\n\n"
+        "Si la demande est ambigue ou si l'analyse ne permet pas de conclure, "
+        "utilise le statut 'information_insuffisante' avec une confiance basse."
+    )
+    return diagnostiquer(prompt_final)
+
+
 if __name__ == "__main__":
-    print(repondre("Quels fichiers composent le dépôt taskflow?"))
+    TICKET = """Titre : "complete_task ne met pas a jour la date de completion"
+Description : Quand j'appelle `complete_task`, la tache passe bien a "terminee"
+mais je ne retrouve jamais quand elle a ete terminee. Le rapport hebdomadaire
+semble aussi ne jamais compter de taches completees recemment."""
+    print(traiter_ticket(TICKET).model_dump_json(indent=2))
